@@ -1,0 +1,68 @@
+From fc8b3ab7cbb4f5e77584babeaf25b9bf16f524cd Mon Sep 17 00:00:00 2001
+From: "Christoph M. Becker" <cmbecker69@gmx.de>
+Date: Mon, 2 Mar 2020 18:45:12 +0100
+Subject: [PATCH] Fix #79013: Content-Length missing when posting a curlFile
+ with curl
+
+Unfortunately, some Webservers (e.g. IIS) do not implement the (F)CGI
+specifications correctly wrt. chunked uploads (i.e. Transfer-encoding:
+chunked), but instead pass -1 as CONTENT_LENGTH to the CGI
+application. However, our (F)CFI SAPIs (i.e. cgi and cgi-fcgi) do not
+support this.
+
+Therefore we try to retrieve the stream size in advance and pass it to
+`curl_mime_data_cb()` to prevent libcurl from doing chunked uploads.
+This is basically the same approach that `curl_mime_filedata()`
+implements, except that we are keeping already opened streams open for
+the `read_cb()`.
+
+Origin: upstream, https://github.com/php/php-src/commit/fc8b3ab7cbb4f5e77584babeaf25b9bf16f524cd
+Bug:  https://bugs.php.net/bug.php?id=79013
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/php7.4/+bug/1887826
+
+diff --git a/ext/curl/interface.c b/ext/curl/interface.c
+index 668f7a71d9..45e41ba49e 100644
+--- a/ext/curl/interface.c
++++ b/ext/curl/interface.c
+@@ -2200,6 +2200,10 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 			char *type = NULL, *filename = NULL;
+ #if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
+ 			struct mime_data_cb_arg *cb_arg;
++			php_stream *stream;
++			php_stream_statbuf ssb;
++			size_t filesize = -1;
++			curl_seek_callback seekfunc = seek_cb;
+ #endif
+ 
+ 			prop = zend_read_property(curl_CURLFile_class, current, "name", sizeof("name")-1, 0, &rv);
+@@ -2225,9 +2229,17 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 				zval_ptr_dtor(&ch->postfields);
+ 				ZVAL_COPY(&ch->postfields, zpostfields);
+ 
++				if ((stream = php_stream_open_wrapper(ZSTR_VAL(postval), "rb", STREAM_MUST_SEEK, NULL))) {
++					if (!stream->readfilters.head && !php_stream_stat(stream, &ssb)) {
++						filesize = ssb.sb.st_size;
++					}
++				} else {
++					seekfunc = NULL;
++				}
++
+ 				cb_arg = emalloc(sizeof *cb_arg);
+ 				cb_arg->filename = zend_string_copy(postval);
+-				cb_arg->stream = NULL;
++				cb_arg->stream = stream;
+ 
+ 				part = curl_mime_addpart(mime);
+ 				if (part == NULL) {
+@@ -2235,7 +2247,7 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 					return FAILURE;
+ 				}
+ 				if ((form_error = curl_mime_name(part, ZSTR_VAL(string_key))) != CURLE_OK
+-					|| (form_error = curl_mime_data_cb(part, -1, read_cb, seek_cb, free_cb, cb_arg)) != CURLE_OK
++					|| (form_error = curl_mime_data_cb(part, filesize, read_cb, seekfunc, free_cb, cb_arg)) != CURLE_OK
+ 					|| (form_error = curl_mime_filename(part, filename ? filename : ZSTR_VAL(postval))) != CURLE_OK
+ 					|| (form_error = curl_mime_type(part, type ? type : "application/octet-stream")) != CURLE_OK) {
+ 					error = form_error;
+-- 
+2.25.1
+

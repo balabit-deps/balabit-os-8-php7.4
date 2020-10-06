@@ -1,0 +1,501 @@
+From 2d0dec91a53bddbf9f9e09d9c58188515907d650 Mon Sep 17 00:00:00 2001
+From: "Christoph M. Becker" <cmbecker69@gmx.de>
+Date: Tue, 4 Feb 2020 11:01:33 +0100
+Subject: [PATCH] Fix #79019: Copied cURL handles upload empty file
+
+To cater to `curl_copy_handle()` of cURL handles with attached
+`CURLFile`s, we must not attach the opened stream, because the stream
+may not be seekable, so that we could rewind, when the same stream is
+going to be uploaded multiple times.  Instead, we're opening the stream
+lazily in the read callback.
+
+Since `curl_multi_perfom()` processes easy handles asynchronously, we
+have no control of the operation sequence.  Since duplicated cURL
+handles may be used with multi handles, we cannot use a single arg
+structure, but actually have to rebuild the whole mime structure on
+handle duplication and attach this to the new handle.
+
+In order to better test this behavior, we extend the test responder to
+print the size of the upload, and patch the existing tests accordingly.
+
+Origin: upstream, https://github.com/php/php-src/commit/2d0dec91a53bddbf9f9e09d9c58188515907d650
+Bug:  https://bugs.php.net/bug.php?id=79019
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/php7.4/+bug/1887826
+
+diff --git a/ext/curl/interface.c b/ext/curl/interface.c
+index 07026e1d9c..668f7a71d9 100644
+--- a/ext/curl/interface.c
++++ b/ext/curl/interface.c
+@@ -1795,11 +1795,20 @@ static void curl_free_post(void **post)
+ }
+ /* }}} */
+ 
+-/* {{{ curl_free_stream
++struct mime_data_cb_arg {
++	zend_string *filename;
++	php_stream *stream;
++};
++
++/* {{{ curl_free_cb_arg
+  */
+-static void curl_free_stream(void **post)
++static void curl_free_cb_arg(void **cb_arg_p)
+ {
+-	php_stream_close((php_stream *)*post);
++	struct mime_data_cb_arg *cb_arg = (struct mime_data_cb_arg *) *cb_arg_p;
++
++	ZEND_ASSERT(cb_arg->stream == NULL);
++	zend_string_release(cb_arg->filename);
++	efree(cb_arg);
+ }
+ /* }}} */
+ 
+@@ -1900,11 +1909,13 @@ php_curl *alloc_curl_handle()
+ 
+ 	zend_llist_init(&ch->to_free->str,   sizeof(char *),          (llist_dtor_func_t)curl_free_string, 0);
+ 	zend_llist_init(&ch->to_free->post,  sizeof(struct HttpPost *), (llist_dtor_func_t)curl_free_post,   0);
+-	zend_llist_init(&ch->to_free->stream, sizeof(php_stream *),   (llist_dtor_func_t)curl_free_stream, 0);
++	zend_llist_init(&ch->to_free->stream, sizeof(struct mime_data_cb_arg *), (llist_dtor_func_t)curl_free_cb_arg, 0);
+ 
+ 	ch->to_free->slist = emalloc(sizeof(HashTable));
+ 	zend_hash_init(ch->to_free->slist, 4, NULL, curl_free_slist, 0);
+-
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++	ZVAL_UNDEF(&ch->postfields);
++#endif
+ 	return ch;
+ }
+ /* }}} */
+@@ -2094,62 +2105,48 @@ void _php_setup_easy_copy_handlers(php_curl *ch, php_curl *source)
+ 	(*source->clone)++;
+ }
+ 
+-/* {{{ proto resource curl_copy_handle(resource ch)
+-   Copy a cURL handle along with all of it's preferences */
+-PHP_FUNCTION(curl_copy_handle)
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++static size_t read_cb(char *buffer, size_t size, size_t nitems, void *arg) /* {{{ */
+ {
+-	CURL		*cp;
+-	zval		*zid;
+-	php_curl	*ch, *dupch;
+-
+-	ZEND_PARSE_PARAMETERS_START(1,1)
+-		Z_PARAM_RESOURCE(zid)
+-	ZEND_PARSE_PARAMETERS_END();
++	struct mime_data_cb_arg *cb_arg = (struct mime_data_cb_arg *) arg;
++	ssize_t numread;
+ 
+-	if ((ch = (php_curl*)zend_fetch_resource(Z_RES_P(zid), le_curl_name, le_curl)) == NULL) {
+-		RETURN_FALSE;
++	if (cb_arg->stream == NULL) {
++		if (!(cb_arg->stream = php_stream_open_wrapper(ZSTR_VAL(cb_arg->filename), "rb", IGNORE_PATH, NULL))) {
++			return CURL_READFUNC_ABORT;
++		}
+ 	}
+-
+-	cp = curl_easy_duphandle(ch->cp);
+-	if (!cp) {
+-		php_error_docref(NULL, E_WARNING, "Cannot duplicate cURL handle");
+-		RETURN_FALSE;
++	numread = php_stream_read(cb_arg->stream, buffer, nitems * size);
++	if (numread < 0) {
++		php_stream_close(cb_arg->stream);
++		cb_arg->stream = NULL;
++		return CURL_READFUNC_ABORT;
+ 	}
+-
+-	dupch = alloc_curl_handle();
+-	dupch->cp = cp;
+-
+-	_php_setup_easy_copy_handlers(dupch, ch);
+-
+-	Z_ADDREF_P(zid);
+-
+-	ZVAL_RES(return_value, zend_register_resource(dupch, le_curl));
+-	dupch->res = Z_RES_P(return_value);
++	return numread;
+ }
+ /* }}} */
+ 
+-#if LIBCURL_VERSION_NUM >= 0x073800
+-static size_t read_cb(char *buffer, size_t size, size_t nitems, void *arg) /* {{{ */
++static int seek_cb(void *arg, curl_off_t offset, int origin) /* {{{ */
+ {
+-	php_stream *stream = (php_stream *) arg;
+-	ssize_t numread = php_stream_read(stream, buffer, nitems * size);
++	struct mime_data_cb_arg *cb_arg = (struct mime_data_cb_arg *) arg;
++	int res;
+ 
+-	if (numread < 0) {
+-		return CURL_READFUNC_ABORT;
++	if (cb_arg->stream == NULL) {
++		return CURL_SEEKFUNC_CANTSEEK;
+ 	}
+-	return numread;
++	res = php_stream_seek(cb_arg->stream, offset, origin);
++	return res == SUCCESS ? CURL_SEEKFUNC_OK : CURL_SEEKFUNC_CANTSEEK;
+ }
+ /* }}} */
+ 
+-static int seek_cb(void *arg, curl_off_t offset, int origin) /* {{{ */
++static void free_cb(void *arg) /* {{{ */
+ {
+-	php_stream *stream = (php_stream *) arg;
+-	int res = php_stream_seek(stream, offset, origin);
++	struct mime_data_cb_arg *cb_arg = (struct mime_data_cb_arg *) arg;
+ 
+-	if (res) {
+-		return CURL_SEEKFUNC_CANTSEEK;
++	if (cb_arg->stream != NULL) {
++		php_stream_close(cb_arg->stream);
++		cb_arg->stream = NULL;
+ 	}
+-	return CURL_SEEKFUNC_OK;
+ }
+ /* }}} */
+ #endif
+@@ -2160,7 +2157,7 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 	zval *current;
+ 	HashTable *postfields;
+ 	zend_string *string_key;
+-	zend_ulong  num_key;
++	zend_ulong num_key;
+ #if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
+ 	curl_mime *mime = NULL;
+ 	curl_mimepart *part;
+@@ -2202,7 +2199,7 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 			zval *prop, rv;
+ 			char *type = NULL, *filename = NULL;
+ #if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
+-			php_stream *stream;
++			struct mime_data_cb_arg *cb_arg;
+ #endif
+ 
+ 			prop = zend_read_property(curl_CURLFile_class, current, "name", sizeof("name")-1, 0, &rv);
+@@ -2225,24 +2222,25 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 				}
+ 
+ #if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
+-				if (!(stream = php_stream_open_wrapper(ZSTR_VAL(postval), "rb", IGNORE_PATH, NULL))) {
+-					zend_string_release_ex(string_key, 0);
+-					return FAILURE;
+-				}
++				zval_ptr_dtor(&ch->postfields);
++				ZVAL_COPY(&ch->postfields, zpostfields);
++
++				cb_arg = emalloc(sizeof *cb_arg);
++				cb_arg->filename = zend_string_copy(postval);
++				cb_arg->stream = NULL;
++
+ 				part = curl_mime_addpart(mime);
+ 				if (part == NULL) {
+-					php_stream_close(stream);
+ 					zend_string_release_ex(string_key, 0);
+ 					return FAILURE;
+ 				}
+ 				if ((form_error = curl_mime_name(part, ZSTR_VAL(string_key))) != CURLE_OK
+-					|| (form_error = curl_mime_data_cb(part, -1, read_cb, seek_cb, NULL, stream)) != CURLE_OK
++					|| (form_error = curl_mime_data_cb(part, -1, read_cb, seek_cb, free_cb, cb_arg)) != CURLE_OK
+ 					|| (form_error = curl_mime_filename(part, filename ? filename : ZSTR_VAL(postval))) != CURLE_OK
+ 					|| (form_error = curl_mime_type(part, type ? type : "application/octet-stream")) != CURLE_OK) {
+-					php_stream_close(stream);
+ 					error = form_error;
+ 				}
+-				zend_llist_add_element(&ch->to_free->stream, &stream);
++				zend_llist_add_element(&ch->to_free->stream, &cb_arg);
+ #else
+ 				form_error = curl_formadd(&first, &last,
+ 								CURLFORM_COPYNAME, ZSTR_VAL(string_key),
+@@ -2310,11 +2308,60 @@ static inline int build_mime_structure_from_hash(php_curl *ch, zval *zpostfields
+ 	zend_llist_add_element(&ch->to_free->post, &first);
+ 	error = curl_easy_setopt(ch->cp, CURLOPT_HTTPPOST, first);
+ #endif
++
+ 	SAVE_CURL_ERROR(ch, error);
+ 	return error == CURLE_OK ? SUCCESS : FAILURE;
+ }
+ /* }}} */
+ 
++/* {{{ proto resource curl_copy_handle(resource ch)
++   Copy a cURL handle along with all of it's preferences */
++PHP_FUNCTION(curl_copy_handle)
++{
++	CURL		*cp;
++	zval		*zid;
++	php_curl	*ch, *dupch;
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++	zval		*postfields;
++#endif
++
++	ZEND_PARSE_PARAMETERS_START(1,1)
++		Z_PARAM_RESOURCE(zid)
++	ZEND_PARSE_PARAMETERS_END();
++
++	if ((ch = (php_curl*)zend_fetch_resource(Z_RES_P(zid), le_curl_name, le_curl)) == NULL) {
++		RETURN_FALSE;
++	}
++
++	cp = curl_easy_duphandle(ch->cp);
++	if (!cp) {
++		php_error_docref(NULL, E_WARNING, "Cannot duplicate cURL handle");
++		RETURN_FALSE;
++	}
++
++	dupch = alloc_curl_handle();
++	dupch->cp = cp;
++
++	_php_setup_easy_copy_handlers(dupch, ch);
++
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++	postfields = &ch->postfields;
++	if (Z_TYPE_P(postfields) != IS_UNDEF) {
++		if (build_mime_structure_from_hash(dupch, postfields) != SUCCESS) {
++			_php_curl_close_ex(dupch);
++			php_error_docref(NULL, E_WARNING, "Cannot rebuild mime structure");
++			RETURN_FALSE;
++		}
++	}
++#endif
++
++	Z_ADDREF_P(zid);
++
++	ZVAL_RES(return_value, zend_register_resource(dupch, le_curl));
++	dupch->res = Z_RES_P(return_value);
++}
++/* }}} */
++
+ static int _php_curl_setopt(php_curl *ch, zend_long option, zval *zvalue) /* {{{ */
+ {
+ 	CURLcode error = CURLE_OK;
+@@ -3613,6 +3660,9 @@ static void _php_curl_close_ex(php_curl *ch)
+ #endif
+ 
+ 	efree(ch->handlers);
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++	zval_ptr_dtor(&ch->postfields);
++#endif
+ 	efree(ch);
+ }
+ /* }}} */
+diff --git a/ext/curl/php_curl.h b/ext/curl/php_curl.h
+index 5d93f16c03..f4f722e134 100644
+--- a/ext/curl/php_curl.h
++++ b/ext/curl/php_curl.h
+@@ -183,6 +183,9 @@ typedef struct {
+ 	struct _php_curl_error        err;
+ 	zend_bool                     in_callback;
+ 	uint32_t*                     clone;
++#if LIBCURL_VERSION_NUM >= 0x073800 /* 7.56.0 */
++	zval                          postfields;
++#endif
+ } php_curl;
+ 
+ #define CURLOPT_SAFE_UPLOAD -1
+diff --git a/ext/curl/tests/bug27023.phpt b/ext/curl/tests/bug27023.phpt
+index 3d649b3f73..f985c192b8 100644
+--- a/ext/curl/tests/bug27023.phpt
++++ b/ext/curl/tests/bug27023.phpt
+@@ -38,7 +38,7 @@ var_dump(curl_exec($ch));
+ curl_close($ch);
+ ?>
+ --EXPECTF--
+-string(%d) "curl_testdata1.txt|application/octet-stream"
+-string(%d) "curl_testdata1.txt|text/plain"
+-string(%d) "foo.txt|application/octet-stream"
+-string(%d) "foo.txt|text/plain"
++string(%d) "curl_testdata1.txt|application/octet-stream|6"
++string(%d) "curl_testdata1.txt|text/plain|6"
++string(%d) "foo.txt|application/octet-stream|6"
++string(%d) "foo.txt|text/plain|6"
+diff --git a/ext/curl/tests/bug77711.phpt b/ext/curl/tests/bug77711.phpt
+index 148c26322a..8ef5e48891 100644
+--- a/ext/curl/tests/bug77711.phpt
++++ b/ext/curl/tests/bug77711.phpt
+@@ -24,7 +24,7 @@ curl_close($ch);
+ ===DONE===
+ --EXPECTF--
+ bool(true)
+-string(%d) "АБВ.txt|application/octet-stream"
++string(%d) "АБВ.txt|application/octet-stream|5"
+ ===DONE===
+ --CLEAN--
+ <?php
+diff --git a/ext/curl/tests/curl_copy_handle_variation3.phpt b/ext/curl/tests/curl_copy_handle_variation3.phpt
+index 18f35f71b1..32946bb4df 100644
+--- a/ext/curl/tests/curl_copy_handle_variation3.phpt
++++ b/ext/curl/tests/curl_copy_handle_variation3.phpt
+@@ -29,8 +29,8 @@ curl_close($ch2);
+ ===DONE===
+ --EXPECTF--
+ bool(true)
+-string(%d) "АБВ.txt|application/octet-stream"
+-string(%d) "АБВ.txt|application/octet-stream"
++string(%d) "АБВ.txt|application/octet-stream|5"
++string(%d) "АБВ.txt|application/octet-stream|5"
+ ===DONE===
+ --CLEAN--
+ <?php
+diff --git a/ext/curl/tests/curl_copy_handle_variation4.phpt b/ext/curl/tests/curl_copy_handle_variation4.phpt
+new file mode 100644
+index 0000000000..e160c06c64
+--- /dev/null
++++ b/ext/curl/tests/curl_copy_handle_variation4.phpt
+@@ -0,0 +1,46 @@
++--TEST--
++curl_copy_handle() allows to post CURLFile multiple times with curl_multi_exec()
++--SKIPIF--
++<?php include 'skipif.inc'; ?>
++--FILE--
++<?php
++include 'server.inc';
++$host = curl_cli_server_start();
++
++$ch1 = curl_init();
++curl_setopt($ch1, CURLOPT_SAFE_UPLOAD, 1);
++curl_setopt($ch1, CURLOPT_URL, "{$host}/get.php?test=file");
++// curl_setopt($ch1, CURLOPT_RETURNTRANSFER, 1);
++
++$filename = __DIR__ . '/АБВ.txt';
++file_put_contents($filename, "Test.");
++$file = curl_file_create($filename);
++$params = array('file' => $file);
++var_dump(curl_setopt($ch1, CURLOPT_POSTFIELDS, $params));
++
++$ch2 = curl_copy_handle($ch1);
++$ch3 = curl_copy_handle($ch1);
++
++$mh = curl_multi_init();
++curl_multi_add_handle($mh, $ch1);
++curl_multi_add_handle($mh, $ch2);
++do {
++    $status = curl_multi_exec($mh, $active);
++    if ($active) {
++        curl_multi_select($mh);
++    }
++} while ($active && $status == CURLM_OK);
++
++curl_multi_remove_handle($mh, $ch1);
++curl_multi_remove_handle($mh, $ch2);
++curl_multi_remove_handle($mh, $ch3);
++curl_multi_close($mh);
++?>
++===DONE===
++--EXPECTF--
++bool(true)
++АБВ.txt|application/octet-stream|5АБВ.txt|application/octet-stream|5===DONE===
++--CLEAN--
++<?php
++@unlink(__DIR__ . '/АБВ.txt');
++?>
+diff --git a/ext/curl/tests/curl_copy_handle_variation5.phpt b/ext/curl/tests/curl_copy_handle_variation5.phpt
+new file mode 100644
+index 0000000000..019704e6c8
+--- /dev/null
++++ b/ext/curl/tests/curl_copy_handle_variation5.phpt
+@@ -0,0 +1,52 @@
++--TEST--
++curl_copy_handle() allows to post CURLFile multiple times if postfields change
++--SKIPIF--
++<?php include 'skipif.inc'; ?>
++--FILE--
++<?php
++include 'server.inc';
++$host = curl_cli_server_start();
++
++$ch1 = curl_init();
++curl_setopt($ch1, CURLOPT_SAFE_UPLOAD, 1);
++curl_setopt($ch1, CURLOPT_URL, "{$host}/get.php?test=file");
++curl_setopt($ch1, CURLOPT_RETURNTRANSFER, 1);
++
++$filename = __DIR__ . '/abc.txt';
++file_put_contents($filename, "Test.");
++$file = curl_file_create($filename);
++$params = array('file' => $file);
++var_dump(curl_setopt($ch1, CURLOPT_POSTFIELDS, $params));
++
++$ch2 = curl_copy_handle($ch1);
++
++$filename = __DIR__ . '/def.txt';
++file_put_contents($filename, "Other test.");
++$file = curl_file_create($filename);
++$params = array('file' => $file);
++var_dump(curl_setopt($ch2, CURLOPT_POSTFIELDS, $params));
++
++$ch3 = curl_copy_handle($ch2);
++
++var_dump(curl_exec($ch1));
++curl_close($ch1);
++
++var_dump(curl_exec($ch2));
++curl_close($ch2);
++
++var_dump(curl_exec($ch3));
++curl_close($ch3);
++?>
++===DONE===
++--EXPECTF--
++bool(true)
++bool(true)
++string(%d) "abc.txt|application/octet-stream|5"
++string(%d) "def.txt|application/octet-stream|11"
++string(%d) "def.txt|application/octet-stream|11"
++===DONE===
++--CLEAN--
++<?php
++@unlink(__DIR__ . '/abc.txt');
++@unlink(__DIR__ . '/def.txt');
++?>
+diff --git a/ext/curl/tests/curl_file_upload.phpt b/ext/curl/tests/curl_file_upload.phpt
+index 73a2f363fb..1626f8117c 100644
+--- a/ext/curl/tests/curl_file_upload.phpt
++++ b/ext/curl/tests/curl_file_upload.phpt
+@@ -60,15 +60,15 @@ var_dump(curl_exec($ch));
+ curl_close($ch);
+ ?>
+ --EXPECTF--
+-string(%d) "curl_testdata1.txt|application/octet-stream"
+-string(%d) "curl_testdata1.txt|text/plain"
+-string(%d) "foo.txt|application/octet-stream"
+-string(%d) "foo.txt|text/plain"
++string(%d) "curl_testdata1.txt|application/octet-stream|6"
++string(%d) "curl_testdata1.txt|text/plain|6"
++string(%d) "foo.txt|application/octet-stream|6"
++string(%d) "foo.txt|text/plain|6"
+ string(%d) "text/plain"
+ string(%d) "%s/curl_testdata1.txt"
+-string(%d) "curl_testdata1.txt|text/plain"
++string(%d) "curl_testdata1.txt|text/plain|6"
+ string(%d) "foo.txt"
+-string(%d) "foo.txt|application/octet-stream"
++string(%d) "foo.txt|application/octet-stream|6"
+ 
+ Warning: curl_setopt(): Disabling safe uploads is no longer supported in %s on line %d
+ string(0) ""
+diff --git a/ext/curl/tests/curl_file_upload_stream.phpt b/ext/curl/tests/curl_file_upload_stream.phpt
+index 03c85b4b82..949cccbc31 100644
+--- a/ext/curl/tests/curl_file_upload_stream.phpt
++++ b/ext/curl/tests/curl_file_upload_stream.phpt
+@@ -24,5 +24,5 @@ curl_close($ch);
+ ===DONE===
+ --EXPECT--
+ bool(true)
+-string(21) "i-love-php|text/plain"
++string(24) "i-love-php|text/plain|11"
+ ===DONE===
+diff --git a/ext/curl/tests/responder/get.inc b/ext/curl/tests/responder/get.inc
+index f9269745f6..64ab267d50 100644
+--- a/ext/curl/tests/responder/get.inc
++++ b/ext/curl/tests/responder/get.inc
+@@ -28,7 +28,7 @@
+       break;
+     case 'file':
+       if (isset($_FILES['file'])) {
+-          echo $_FILES['file']['name'] . '|' . $_FILES['file']['type'];
++          echo $_FILES['file']['name'] . '|' . $_FILES['file']['type'] . '|' . $_FILES['file']['size'];
+       }
+       break;
+     case 'method':
+-- 
+2.25.1
+
