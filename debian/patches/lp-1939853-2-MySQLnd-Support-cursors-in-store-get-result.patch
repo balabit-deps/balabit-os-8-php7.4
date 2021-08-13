@@ -1,0 +1,456 @@
+commit bc166844e37a6e1531a18dc0916fbe508152fc6c
+Author: Nikita Popov <nikita.ppv@gmail.com>
+Date: Wed, 16 Dec 2020 12:12:06 +0100
+Description: 
+
+    MySQLnd: Support cursors in store/get result
+    
+    This fixes two related issues:
+    
+    1. When a PS with cursor is used in store_result/get_result,
+       perform a COM_FETCH with maximum number of rows rather than
+       silently switching to an unbuffered result set (in the case of
+       store_result) or erroring (in the case of get_result).
+       In the future, we might want to make get_result unbuffered for
+       PS with cursors, as using cursors with buffered result sets
+       doesn't really make sense. Unlike store_result, get_result
+       isn't very explicit about what kind of result set is desired.
+    2. If the client did not request a cursor, but the server reports
+       that a cursor exists, ignore this and treat the PS as if it
+       has no cursor (i.e. to not use COM_FETCH). It appears to be a
+       server side bug that a cursor used inside an SP will be reported
+       to the client, even though the client cannot use the cursor.
+    
+    Fixes bug #64638, bug #72862, bug #77935.
+    
+    Closes GH-6518.
+
+Bug: https://bugs.php.net/bug.php?id=64638
+Bug: https://bugs.php.net/bug.php?id=72862
+Bug: https://bugs.php.net/bug.php?id=77935
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1939853
+Origin: backport, https://github.com/php/php-src/commit/bc166844e37a6e1531a18dc0916fbe508152fc6c
+Last-Update: 2021-08-13
+
+Index: php7.4-7.4.3/ext/mysqli/tests/bug77935.phpt
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ php7.4-7.4.3/ext/mysqli/tests/bug77935.phpt	2021-08-13 17:38:43.858032232 +1200
+@@ -0,0 +1,38 @@
++--TEST--
++Bug #77935: Crash in mysqlnd_fetch_stmt_row_cursor when calling an SP with a cursor
++--SKIPIF--
++<?php
++require_once('skipif.inc');
++require_once('skipifconnectfailure.inc');
++?>
++--FILE--
++<?php
++require_once(__DIR__ . '/connect.inc');
++
++mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
++$db = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket);
++$db->query('DROP PROCEDURE IF EXISTS testSp');
++$db->query(<<<'SQL'
++CREATE
++    PROCEDURE `testSp`()
++	BEGIN
++		DECLARE `cur` CURSOR FOR SELECT 1;
++		OPEN `cur`;
++		CLOSE `cur`;
++		SELECT 1;
++	END;
++SQL);
++
++$stmt = $db->prepare("CALL testSp()");
++$stmt->execute();
++$result = $stmt->get_result();
++while ($row = $result->fetch_assoc()) {
++    var_dump($row);
++}
++
++?>
++--EXPECT--
++array(1) {
++  [1]=>
++  int(1)
++}
+Index: php7.4-7.4.3/ext/mysqli/tests/mysqli_stmt_get_result.phpt
+===================================================================
+--- php7.4-7.4.3.orig/ext/mysqli/tests/mysqli_stmt_get_result.phpt	2021-08-13 17:38:43.858032232 +1200
++++ php7.4-7.4.3/ext/mysqli/tests/mysqli_stmt_get_result.phpt	2021-08-13 17:38:43.858032232 +1200
+@@ -110,21 +110,7 @@
+ 
+ 	mysqli_stmt_close($stmt);
+ 
+-	if (!$stmt = mysqli_stmt_init($link))
+-		printf("[032] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
+-
+-	if (!mysqli_stmt_prepare($stmt, "SELECT id, label FROM test ORDER BY id LIMIT 2"))
+-		printf("[033] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+-
+-	if (!mysqli_stmt_execute($stmt))
+-		printf("[034] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+-
+-	$id = NULL;
+-	$label = NULL;
+-	if (true !== ($tmp = mysqli_stmt_bind_result($stmt, $id, $label)))
+-		printf("[035] Expecting boolean/true, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
+-
+-    // get_result cannot be used in PS cursor mode
++    // get_result can be used in PS cursor mode
+     if (!$stmt = mysqli_stmt_init($link))
+         printf("[030] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
+ 
+@@ -137,23 +123,10 @@
+     if (!mysqli_stmt_execute($stmt))
+         printf("[033] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+ 
+-    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+-    try {
+-        $res = mysqli_stmt_get_result($stmt);
+-        // we expect no segfault if we try to fetch a row because get_result should throw an error or return false
+-        mysqli_fetch_assoc($res);
+-    } catch (\mysqli_sql_exception $e) {
+-        echo $e->getMessage() . "\n";
+-    }
+-
+-    try {
+-        $res = $stmt->get_result();
+-        // we expect no segfault if we try to fetch a row because get_result should throw an error or return false
+-        $res->fetch_assoc();
+-    } catch (\mysqli_sql_exception $e) {
+-        echo $e->getMessage() . "\n";
++    $result = mysqli_stmt_get_result($stmt);
++    while ($row = mysqli_fetch_assoc($result)) {
++        var_dump($row);
+     }
+-    mysqli_report(MYSQLI_REPORT_OFF);
+ 
+     if (!$stmt = mysqli_stmt_init($link))
+         printf("[034] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
+@@ -213,8 +186,18 @@
+ 
+ Warning: mysqli_stmt_get_result(): invalid object or resource mysqli_stmt
+  in %s on line %d
+-mysqli_stmt_get_result() cannot be used with cursors
+-get_result() cannot be used with cursors
++array(2) {
++  ["id"]=>
++  int(1)
++  ["label"]=>
++  string(1) "a"
++}
++array(2) {
++  ["id"]=>
++  int(2)
++  ["label"]=>
++  string(1) "b"
++}
+ [040] [2014] [Commands out of sync; you can't run this command now]
+ [041] [0] []
+ array(2) {
+Index: php7.4-7.4.3/ext/mysqli/tests/ps_cursor_multiple_result_sets.phpt
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ php7.4-7.4.3/ext/mysqli/tests/ps_cursor_multiple_result_sets.phpt	2021-08-13 17:38:43.858032232 +1200
+@@ -0,0 +1,99 @@
++--TEST--
++PS using cursor and returning multiple result sets
++--SKIPIF--
++<?php
++require_once('skipif.inc');
++require_once('skipifconnectfailure.inc');
++?>
++--FILE--
++<?php
++require_once(__DIR__ . '/connect.inc');
++
++mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
++$db = my_mysqli_connect($host, $user, $passwd, $db, $port, $socket);
++$db->query('DROP PROCEDURE IF EXISTS testPs');
++$db->query(<<<'SQL'
++CREATE PROCEDURE testPs() BEGIN
++    DECLARE testCursor CURSOR FOR SELECT 'stuff';
++    OPEN testCursor;
++    CLOSE testCursor;
++    SELECT 1 as a, 2 as b;
++    SELECT 3 as a, 4 as b;
++END
++SQL
++);
++
++echo "use_result:\n";
++$stmt = $db->prepare("call testPs()");
++$stmt->execute();
++$stmt->bind_result($v1, $v2);
++while ($stmt->fetch()) {
++    var_dump($v1, $v2);
++}
++
++$stmt->next_result();
++$stmt->bind_result($v1, $v2);
++while ($stmt->fetch()) {
++    var_dump($v1, $v2);
++}
++$stmt->next_result();
++
++echo "\nstore_result:\n";
++$stmt = $db->prepare("call testPs()");
++$stmt->execute();
++$stmt->store_result();
++$stmt->bind_result($v1, $v2);
++while ($stmt->fetch()) {
++    var_dump($v1, $v2);
++}
++
++$stmt->next_result();
++$stmt->store_result();
++$stmt->bind_result($v1, $v2);
++while ($stmt->fetch()) {
++    var_dump($v1, $v2);
++}
++$stmt->next_result();
++
++echo "\nget_result:\n";
++$stmt = $db->prepare("call testPs()");
++$stmt->execute();
++$result = $stmt->get_result();
++while ($row = $result->fetch_assoc()) {
++    var_dump($row);
++}
++
++$stmt->next_result();
++$result = $stmt->get_result();
++while ($row = $result->fetch_assoc()) {
++    var_dump($row);
++}
++$stmt->next_result();
++
++?>
++--EXPECT--
++use_result:
++int(1)
++int(2)
++int(3)
++int(4)
++
++store_result:
++int(1)
++int(2)
++int(3)
++int(4)
++
++get_result:
++array(2) {
++  ["a"]=>
++  int(1)
++  ["b"]=>
++  int(2)
++}
++array(2) {
++  ["a"]=>
++  int(3)
++  ["b"]=>
++  int(4)
++}
+Index: php7.4-7.4.3/ext/mysqlnd/mysqlnd_ps.c
+===================================================================
+--- php7.4-7.4.3.orig/ext/mysqlnd/mysqlnd_ps.c	2021-08-13 17:38:43.858032232 +1200
++++ php7.4-7.4.3/ext/mysqlnd/mysqlnd_ps.c	2021-08-13 17:38:43.858032232 +1200
+@@ -40,6 +40,36 @@
+ static void mysqlnd_stmt_separate_result_bind(MYSQLND_STMT * const stmt);
+ static void mysqlnd_stmt_separate_one_result_bind(MYSQLND_STMT * const stmt, const unsigned int param_no);
+ 
++static enum_func_status mysqlnd_stmt_send_cursor_fetch_command(
++		const MYSQLND_STMT_DATA *stmt, unsigned max_rows)
++{
++	MYSQLND_CONN_DATA *conn = stmt->conn;
++	zend_uchar buf[MYSQLND_STMT_ID_LENGTH /* statement id */ + 4 /* number of rows to fetch */];
++	const MYSQLND_CSTRING payload = {(const char*) buf, sizeof(buf)};
++
++	int4store(buf, stmt->stmt_id);
++	int4store(buf + MYSQLND_STMT_ID_LENGTH, max_rows);
++
++	if (conn->command->stmt_fetch(conn, payload) == FAIL) {
++		COPY_CLIENT_ERROR(stmt->error_info, *conn->error_info);
++		return FAIL;
++	}
++	return PASS;
++}
++
++static zend_bool mysqlnd_stmt_check_state(const MYSQLND_STMT_DATA *stmt)
++{
++	const MYSQLND_CONN_DATA *conn = stmt->conn;
++	if (stmt->state != MYSQLND_STMT_WAITING_USE_OR_STORE) {
++		return 0;
++	}
++	if (stmt->cursor_exists) {
++		return GET_CONNECTION_STATE(&conn->state) == CONN_READY;
++	} else {
++		return GET_CONNECTION_STATE(&conn->state) == CONN_FETCHING_DATA;
++	}
++}
++
+ /* {{{ mysqlnd_stmt::store_result */
+ static MYSQLND_RES *
+ MYSQLND_METHOD(mysqlnd_stmt, store_result)(MYSQLND_STMT * const s)
+@@ -60,14 +90,8 @@
+ 		DBG_RETURN(NULL);
+ 	}
+ 
+-	if (stmt->cursor_exists) {
+-		/* Silently convert buffered to unbuffered, for now */
+-		DBG_RETURN(s->m->use_result(s));
+-	}
+-
+ 	/* Nothing to store for UPSERT/LOAD DATA*/
+-	if (GET_CONNECTION_STATE(&conn->state) != CONN_FETCHING_DATA || stmt->state != MYSQLND_STMT_WAITING_USE_OR_STORE)
+-	{
++	if (!mysqlnd_stmt_check_state(stmt)) {
+ 		SET_CLIENT_ERROR(conn->error_info, CR_COMMANDS_OUT_OF_SYNC, UNKNOWN_SQLSTATE, mysqlnd_out_of_sync);
+ 		DBG_RETURN(NULL);
+ 	}
+@@ -78,6 +102,12 @@
+ 	SET_EMPTY_ERROR(conn->error_info);
+ 	MYSQLND_INC_CONN_STATISTIC(conn->stats, STAT_PS_BUFFERED_SETS);
+ 
++	if (stmt->cursor_exists) {
++		if (mysqlnd_stmt_send_cursor_fetch_command(stmt, -1) == FAIL) {
++			DBG_RETURN(NULL);
++		}
++	}
++
+ 	result = stmt->result;
+ 	result->type			= MYSQLND_RES_PS_BUF;
+ /*	result->m.row_decoder = php_mysqlnd_rowp_read_binary_protocol; */
+@@ -150,19 +180,8 @@
+ 		DBG_RETURN(NULL);
+ 	}
+ 
+-	if (stmt->cursor_exists) {
+-		/* Prepared statement cursors are not supported as of yet */
+-		char * msg;
+-		mnd_sprintf(&msg, 0, "%s() cannot be used with cursors", get_active_function_name());
+-		SET_CLIENT_ERROR(stmt->error_info, CR_NOT_IMPLEMENTED, UNKNOWN_SQLSTATE, msg);
+-		if (msg) {
+-			mnd_sprintf_free(msg);
+-		}
+-		DBG_RETURN(NULL);
+-	}
+-
+ 	/* Nothing to store for UPSERT/LOAD DATA*/
+-	if (GET_CONNECTION_STATE(&conn->state) != CONN_FETCHING_DATA || stmt->state != MYSQLND_STMT_WAITING_USE_OR_STORE) {
++	if (!mysqlnd_stmt_check_state(stmt)) {
+ 		SET_CLIENT_ERROR(stmt->error_info, CR_COMMANDS_OUT_OF_SYNC, UNKNOWN_SQLSTATE, mysqlnd_out_of_sync);
+ 		DBG_RETURN(NULL);
+ 	}
+@@ -171,6 +190,12 @@
+ 	SET_EMPTY_ERROR(conn->error_info);
+ 	MYSQLND_INC_CONN_STATISTIC(conn->stats, STAT_BUFFERED_SETS);
+ 
++	if (stmt->cursor_exists) {
++		if (mysqlnd_stmt_send_cursor_fetch_command(stmt, -1) == FAIL) {
++			DBG_RETURN(NULL);
++		}
++	}
++
+ 	do {
+ 		result = conn->m->result_init(stmt->result->field_count);
+ 		if (!result) {
+@@ -558,28 +583,30 @@
+ 			DBG_INF_FMT("server_status=%u cursor=%u", UPSERT_STATUS_GET_SERVER_STATUS(stmt->upsert_status),
+ 						UPSERT_STATUS_GET_SERVER_STATUS(stmt->upsert_status) & SERVER_STATUS_CURSOR_EXISTS);
+ 
+-			if (UPSERT_STATUS_GET_SERVER_STATUS(stmt->upsert_status) & SERVER_STATUS_CURSOR_EXISTS) {
+-				DBG_INF("cursor exists");
+-				stmt->cursor_exists = TRUE;
+-				SET_CONNECTION_STATE(&conn->state, CONN_READY);
+-				/* Only cursor read */
+-				stmt->default_rset_handler = s->m->use_result;
+-				DBG_INF("use_result");
+-			} else if (stmt->flags & CURSOR_TYPE_READ_ONLY) {
+-				DBG_INF("asked for cursor but got none");
+-				/*
+-				  We have asked for CURSOR but got no cursor, because the condition
+-				  above is not fulfilled. Then...
+-
+-				  This is a single-row result set, a result set with no rows, EXPLAIN,
+-				  SHOW VARIABLES, or some other command which either a) bypasses the
+-				  cursors framework in the server and writes rows directly to the
+-				  network or b) is more efficient if all (few) result set rows are
+-				  precached on client and server's resources are freed.
+-				*/
+-				/* preferred is buffered read */
+-				stmt->default_rset_handler = s->m->store_result;
+-				DBG_INF("store_result");
++			if (stmt->flags & CURSOR_TYPE_READ_ONLY) {
++				if (UPSERT_STATUS_GET_SERVER_STATUS(stmt->upsert_status) & SERVER_STATUS_CURSOR_EXISTS) {
++					DBG_INF("cursor exists");
++					stmt->cursor_exists = TRUE;
++					SET_CONNECTION_STATE(&conn->state, CONN_READY);
++					/* Only cursor read */
++					stmt->default_rset_handler = s->m->use_result;
++					DBG_INF("use_result");
++				} else {
++					DBG_INF("asked for cursor but got none");
++					/*
++					  We have asked for CURSOR but got no cursor, because the condition
++					  above is not fulfilled. Then...
++
++					  This is a single-row result set, a result set with no rows, EXPLAIN,
++					  SHOW VARIABLES, or some other command which either a) bypasses the
++					  cursors framework in the server and writes rows directly to the
++					  network or b) is more efficient if all (few) result set rows are
++					  precached on client and server's resources are freed.
++					*/
++					/* preferred is buffered read */
++					stmt->default_rset_handler = s->m->store_result;
++					DBG_INF("store_result");
++				}
+ 			} else {
+ 				DBG_INF("no cursor");
+ 				/* preferred is unbuffered read */
+@@ -933,11 +960,7 @@
+ 	}
+ 	DBG_INF_FMT("stmt=%lu", stmt->stmt_id);
+ 
+-	if (!stmt->field_count ||
+-		(!stmt->cursor_exists && GET_CONNECTION_STATE(&conn->state) != CONN_FETCHING_DATA) ||
+-		(stmt->cursor_exists && GET_CONNECTION_STATE(&conn->state) != CONN_READY) ||
+-		(stmt->state != MYSQLND_STMT_WAITING_USE_OR_STORE))
+-	{
++	if (!stmt->field_count || !mysqlnd_stmt_check_state(stmt)) {
+ 		SET_CLIENT_ERROR(conn->error_info, CR_COMMANDS_OUT_OF_SYNC, UNKNOWN_SQLSTATE, mysqlnd_out_of_sync);
+ 		DBG_ERR("command out of sync");
+ 		DBG_RETURN(NULL);
+@@ -967,7 +990,6 @@
+ 	MYSQLND_STMT * s = (MYSQLND_STMT *) param;
+ 	MYSQLND_STMT_DATA * stmt = s? s->data : NULL;
+ 	MYSQLND_CONN_DATA * conn = stmt? stmt->conn : NULL;
+-	zend_uchar buf[MYSQLND_STMT_ID_LENGTH /* statement id */ + 4 /* number of rows to fetch */];
+ 	MYSQLND_PACKET_ROW * row_packet;
+ 
+ 	DBG_ENTER("mysqlnd_fetch_stmt_row_cursor");
+@@ -991,18 +1013,9 @@
+ 	SET_EMPTY_ERROR(stmt->error_info);
+ 	SET_EMPTY_ERROR(conn->error_info);
+ 
+-	int4store(buf, stmt->stmt_id);
+-	int4store(buf + MYSQLND_STMT_ID_LENGTH, 1); /* for now fetch only one row */
+-
+-	{
+-		const MYSQLND_CSTRING payload = {(const char*) buf, sizeof(buf)};
+-
+-		ret = conn->command->stmt_fetch(conn, payload);
+-		if (ret == FAIL) {
+-			COPY_CLIENT_ERROR(stmt->error_info, *conn->error_info);
+-			DBG_RETURN(FAIL);
+-		}
+-
++	/* for now fetch only one row */
++	if (mysqlnd_stmt_send_cursor_fetch_command(stmt, 1) == FAIL) {
++		DBG_RETURN(FAIL);
+ 	}
+ 
+ 	row_packet->skip_extraction = stmt->result_bind? FALSE:TRUE;

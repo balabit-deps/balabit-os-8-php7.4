@@ -59,3 +59,5 @@ CVE-2021-21704-3.patch
 CVE-2021-21704-4.patch
 CVE-2021-21705.patch
 CVE-2021-21705-2.patch
+lp-1939853-1-Fix-Segfault-with-get_result-and-PS-cursors.patch
+lp-1939853-2-MySQLnd-Support-cursors-in-store-get-result.patch

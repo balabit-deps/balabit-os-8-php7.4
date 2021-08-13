@@ -1,0 +1,167 @@
+commit b5481defe64c991d0e4307372d69c0ea3cd83378
+Author: Dharman <tekiela246@gmail.com>
+Date: Thu 17 Sep 2020 12:35:26 +0100
+Description: 
+
+    Fix bug #72413: Segfault with get_result and PS cursors
+    
+    We cannot simply switch to use_result here, because the fetch_row
+    methods in get_result mode and in use_result/store_result mode
+    are different: In one case it accepts a statement, in the other
+    a return value zval. Thus, doing a switch to use_result results
+    in a segfault when trying to fetch a row.
+    
+    Actually supporting get_result with cursors would require adding
+    cursor support in mysqlnd_result, not just mysqlnd_ps. That would
+    be a significant amount of effort and, given the age of the issue,
+    does not appear to be particularly likely to happen soon.
+    
+    As such, we simply generate an error when using get_result()
+    with cursors, which is much better than causing a segfault.
+    Instead, parameter binding needs to be used.
+
+Bug: https://bugs.php.net/bug.php?id=72413
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1939853
+Origin: backport, https://github.com/php/php-src/commit/b5481defe64c991d0e4307372d69c0ea3cd83378
+Last-Update: 2021-08-13
+
+Index: php7.4-7.4.3/ext/mysqli/tests/mysqli_stmt_get_result.phpt
+===================================================================
+--- php7.4-7.4.3.orig/ext/mysqli/tests/mysqli_stmt_get_result.phpt	2021-08-13 17:38:24.417849632 +1200
++++ php7.4-7.4.3/ext/mysqli/tests/mysqli_stmt_get_result.phpt	2021-08-13 17:38:24.417849632 +1200
+@@ -124,32 +124,77 @@
+ 	if (true !== ($tmp = mysqli_stmt_bind_result($stmt, $id, $label)))
+ 		printf("[035] Expecting boolean/true, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
+ 
+-	if (!is_object($tmp = $result = mysqli_stmt_get_result($stmt)))
+-		printf("[036] Expecting array, got %s/%s, [%d] %s\n",
+-			gettype($tmp), var_export($tmp, 1),
+-			mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+-
+-	if (false !== ($tmp = mysqli_stmt_fetch($stmt)))
+-		printf("[037] Expecting boolean/false, got %s/%s, [%d] %s\n",
+-			gettype($tmp), $tmp, mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+-
+-	printf("[038] [%d] [%s]\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
+-	printf("[039] [%d] [%s]\n", mysqli_errno($link), mysqli_error($link));
+-	while ($row = mysqli_fetch_assoc($result)) {
+-		var_dump($row);
+-	}
+-	mysqli_free_result($result);
++    // get_result cannot be used in PS cursor mode
++    if (!$stmt = mysqli_stmt_init($link))
++        printf("[030] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
++
++    if (!mysqli_stmt_prepare($stmt, "SELECT id, label FROM test ORDER BY id LIMIT 2"))
++        printf("[031] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    if (!mysqli_stmt_attr_set($stmt, MYSQLI_STMT_ATTR_CURSOR_TYPE, MYSQLI_CURSOR_TYPE_READ_ONLY))
++        printf("[032] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    if (!mysqli_stmt_execute($stmt))
++        printf("[033] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
++    try {
++        $res = mysqli_stmt_get_result($stmt);
++        // we expect no segfault if we try to fetch a row because get_result should throw an error or return false
++        mysqli_fetch_assoc($res);
++    } catch (\mysqli_sql_exception $e) {
++        echo $e->getMessage() . "\n";
++    }
++
++    try {
++        $res = $stmt->get_result();
++        // we expect no segfault if we try to fetch a row because get_result should throw an error or return false
++        $res->fetch_assoc();
++    } catch (\mysqli_sql_exception $e) {
++        echo $e->getMessage() . "\n";
++    }
++    mysqli_report(MYSQLI_REPORT_OFF);
++
++    if (!$stmt = mysqli_stmt_init($link))
++        printf("[034] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
++
++    if (!mysqli_stmt_prepare($stmt, "SELECT id, label FROM test ORDER BY id LIMIT 2"))
++        printf("[035] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    if (!mysqli_stmt_execute($stmt))
++        printf("[036] [%d] %s\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    $id = NULL;
++    $label = NULL;
++    if (true !== ($tmp = mysqli_stmt_bind_result($stmt, $id, $label)))
++        printf("[037] Expecting boolean/true, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
++
++    if (!is_object($tmp = $result = mysqli_stmt_get_result($stmt)))
++        printf("[038] Expecting array, got %s/%s, [%d] %s\n",
++            gettype($tmp), var_export($tmp, 1),
++            mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    if (false !== ($tmp = mysqli_stmt_fetch($stmt)))
++        printf("[039] Expecting boolean/false, got %s/%s, [%d] %s\n",
++            gettype($tmp), $tmp, mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++
++    printf("[040] [%d] [%s]\n", mysqli_stmt_errno($stmt), mysqli_stmt_error($stmt));
++    printf("[041] [%d] [%s]\n", mysqli_errno($link), mysqli_error($link));
++    while ($row = mysqli_fetch_assoc($result)) {
++        var_dump($row);
++    }
++    mysqli_free_result($result);
+ 
+ 	if (!mysqli_kill($link, mysqli_thread_id($link)))
+-		printf("[040] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
++		printf("[042] [%d] %s\n", mysqli_errno($link), mysqli_error($link));
+ 
+ 	if (false !== ($tmp = mysqli_stmt_get_result($stmt)))
+-		printf("[041] Expecting false, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
++		printf("[043] Expecting false, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
+ 
+ 	mysqli_stmt_close($stmt);
+ 
+ 	if (false !== ($tmp = mysqli_stmt_fetch($stmt)))
+-		printf("[042] Expecting false, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
++		printf("[044] Expecting false, got %s/%s\n", gettype($tmp), var_export($tmp, 1));
+ 
+ 	mysqli_close($link);
+ 
+@@ -168,8 +213,10 @@
+ 
+ Warning: mysqli_stmt_get_result(): invalid object or resource mysqli_stmt
+  in %s on line %d
+-[038] [2014] [Commands out of sync; you can't run this command now]
+-[039] [0] []
++mysqli_stmt_get_result() cannot be used with cursors
++get_result() cannot be used with cursors
++[040] [2014] [Commands out of sync; you can't run this command now]
++[041] [0] []
+ array(2) {
+   ["id"]=>
+   int(1)
+Index: php7.4-7.4.3/ext/mysqlnd/mysqlnd_ps.c
+===================================================================
+--- php7.4-7.4.3.orig/ext/mysqlnd/mysqlnd_ps.c	2021-08-13 17:38:24.417849632 +1200
++++ php7.4-7.4.3/ext/mysqlnd/mysqlnd_ps.c	2021-08-13 17:38:24.417849632 +1200
+@@ -151,13 +151,19 @@
+ 	}
+ 
+ 	if (stmt->cursor_exists) {
+-		/* Silently convert buffered to unbuffered, for now */
+-		DBG_RETURN(s->m->use_result(s));
++		/* Prepared statement cursors are not supported as of yet */
++		char * msg;
++		mnd_sprintf(&msg, 0, "%s() cannot be used with cursors", get_active_function_name());
++		SET_CLIENT_ERROR(stmt->error_info, CR_NOT_IMPLEMENTED, UNKNOWN_SQLSTATE, msg);
++		if (msg) {
++			mnd_sprintf_free(msg);
++		}
++		DBG_RETURN(NULL);
+ 	}
+ 
+ 	/* Nothing to store for UPSERT/LOAD DATA*/
+ 	if (GET_CONNECTION_STATE(&conn->state) != CONN_FETCHING_DATA || stmt->state != MYSQLND_STMT_WAITING_USE_OR_STORE) {
+-		SET_CLIENT_ERROR(conn->error_info, CR_COMMANDS_OUT_OF_SYNC, UNKNOWN_SQLSTATE, mysqlnd_out_of_sync);
++		SET_CLIENT_ERROR(stmt->error_info, CR_COMMANDS_OUT_OF_SYNC, UNKNOWN_SQLSTATE, mysqlnd_out_of_sync);
+ 		DBG_RETURN(NULL);
+ 	}
+ 

@@ -1,3 +1,12 @@
+php7.4 (7.4.3-4ubuntu2.6) focal; urgency=medium
+
+  * Fix a segmentation fault and implement support for using cursors
+    on prepared statements in the mysqli database driver. (LP: #1939853)
+    - d/p/lp-1939853-1-Fix-Segfault-with-get_result-and-PS-cursors.patch
+    - d/p/lp-1939853-2-MySQLnd-Support-cursors-in-store-get-result.patch
+
+ -- Matthew Ruffell <matthew.ruffell@canonical.com>  Fri, 13 Aug 2021 17:39:12 +1200
+
 php7.4 (7.4.3-4ubuntu2.5) focal-security; urgency=medium
 
   * SECURITY UPDATE: crash or info disclosure via PHAR zip file
