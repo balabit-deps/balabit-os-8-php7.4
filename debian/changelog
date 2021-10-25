@@ -1,3 +1,16 @@
+php7.4 (7.4.3-4ubuntu2.7) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Out of bounds read/write
+    - debian/patches/CVE-2021-21703.patch: The main change is to
+      store scoreboard procs directly to the variable sized
+      array rather than indirectly through the pointer in
+      sapi/fpm/fpm/fpm_children.c, sapi/fpm/fpm/fpm_request.c,
+      sapi/fpm/fpm/fpm_scoreboard.c, sapi/fpm/fpm/fpm_scoreboard.h,
+      sapi/fpm/fpm/fpm_status.c, sapi/fpm/fpm/fpm_worker_pool.c.
+    - CVE-2021-21703
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Mon, 25 Oct 2021 15:20:54 -0300
+
 php7.4 (7.4.3-4ubuntu2.6) focal; urgency=medium
 
   * Fix a segmentation fault and implement support for using cursors
