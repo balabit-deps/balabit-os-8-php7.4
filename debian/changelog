@@ -1,3 +1,10 @@
+php7.4 (7.4.3-4ubuntu2.8) focal; urgency=medium
+
+  * d/p/0047-fix-exception-infinite-loop.patch: Fix ErrorException infinite
+    loop (LP: #1951031)
+
+ -- Athos Ribeiro <athos.ribeiro@canonical.com>  Thu, 25 Nov 2021 20:16:22 -0300
+
 php7.4 (7.4.3-4ubuntu2.7) focal-security; urgency=medium
 
   * SECURITY UPDATE: Out of bounds read/write
