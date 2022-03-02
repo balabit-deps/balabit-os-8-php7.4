@@ -63,3 +63,12 @@ lp-1939853-1-Fix-Segfault-with-get_result-and-PS-cursors.patch
 lp-1939853-2-MySQLnd-Support-cursors-in-store-get-result.patch
 CVE-2021-21703.patch
 0047-fix-exception-infinite-loop.patch
+CVE-2021-21708.patch
+CVE-2017-8923.patch
+CVE-2017-9118-pre1.patch
+CVE-2017-9118-pre2.patch
+CVE-2017-9118-pre3.patch
+CVE-2017-9118.patch
+CVE-2017-9119.patch
+CVE-2017-9120.patch
+CVE-2021-21707.patch

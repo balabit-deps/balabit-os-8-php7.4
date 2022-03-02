@@ -1,3 +1,50 @@
+php7.4 (7.4.3-4ubuntu2.10) focal-security; urgency=medium
+
+  * SECURITY UPDATE: DoS in zend_string_extend function
+    - debian/patches/CVE-2017-8923.patch: fix integer Overflow when
+      concatenating strings in Zend/zend_vm_def.h, Zend/zend_vm_execute.h.
+    - CVE-2017-8923
+  * SECURITY UPDATE: out of bounds access in php_pcre_replace_impl
+    - debian/patches/CVE-2017-9118-pre1.patch: fix heap buffer overflow via
+      str_repeat in Zend/zend_operators.c, Zend/zend_string.h.
+    - debian/patches/CVE-2017-9118-pre2.patch: fix memory corruption in
+      preg_replace/preg_replace_callback in ext/pcre/php_pcre.c,
+      ext/pcre/tests/bug79188.phpt.
+    - debian/patches/CVE-2017-9118-pre3.patch: fix too much memory is
+      allocated for preg_replace() in ext/pcre/php_pcre.c,
+      ext/pcre/tests/bug81243.phpt.
+    - debian/patches/CVE-2017-9118.patch: fix out of bounds in
+      php_pcre_replace_impl in Zend/zend_string.h, ext/pcre/php_pcre.c.
+    - CVE-2017-9118
+  * SECURITY UPDATE: DoS via memory consumption in i_zval_ptr_dtor
+    - debian/patches/CVE-2017-9119.patch: handle memory limit error during
+      string reallocation correctly in Zend/zend_string.h.
+    - CVE-2017-9119
+  * SECURITY UPDATE: DoS via integer overflow in mysqli_real_escape_string
+    - debian/patches/CVE-2017-9120.patch: fix overflow in
+      ext/mysqli/mysqli_api.c.
+    - CVE-2017-9120
+  * SECURITY UPDATE: filename truncation issue in XML parsing functions
+    - debian/patches/CVE-2021-21707.patch: special character is breaking
+      the path in xml function in ext/dom/domimplementation.c,
+      ext/dom/tests/bug79971_2.phpt, ext/libxml/libxml.c,
+      ext/simplexml/tests/bug79971_1.phpt,
+      ext/simplexml/tests/bug79971_1.xml.
+    - CVE-2021-21707
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Wed, 02 Mar 2022 10:36:52 -0500
+
+php7.4 (7.4.3-4ubuntu2.9) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Use after free
+    - debian/patches/CVE-2021-21708.patch: change the call to
+      zval_ptr_dtor in ext/filter/logical_filters.c to be done
+      after a validation is succeeded, and add a test for this
+      case in ext/filter/tests/bug81708.phpt
+    - CVE-2021-21708
+
+ -- Rodrigo Figueiredo Zaiden <rodrigo.zaiden@canonical.com>  Thu, 24 Feb 2022 11:55:48 -0300
+
 php7.4 (7.4.3-4ubuntu2.8) focal; urgency=medium
 
   * d/p/0047-fix-exception-infinite-loop.patch: Fix ErrorException infinite
