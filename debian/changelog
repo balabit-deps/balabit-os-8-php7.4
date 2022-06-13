@@ -1,3 +1,24 @@
+php7.4 (7.4.3-4ubuntu2.12) focal-security; urgency=medium
+
+  * SECURITY UPDATE: RCE via Uninitialized array in pg_query_params()
+    - debian/patches/CVE-2022-31625.patch: don't free parameters which
+      haven't initialized yet in ext/pgsql/pgsql.c,
+      ext/pgsql/tests/bug81720.phpt.
+    - CVE-2022-31625
+  * SECURITY UPDATE: RCE via mysqlnd/pdo password buffer overflow
+    - debian/patches/CVE-20022-31626.patch: properly calculate size in
+      ext/mysqlnd/mysqlnd_wireprotocol.c.
+    - CVE-2022-31626
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 13 Jun 2022 09:43:30 -0400
+
+php7.4 (7.4.3-4ubuntu2.11) focal; urgency=medium
+
+  * d/p/0048-Fix-bug-79603-by-retrying-on-RTD-key-collision.patch: retry on RTD
+    key collision. (LP: #1968228)
+
+ -- Athos Ribeiro <athos.ribeiro@canonical.com>  Thu, 05 May 2022 21:16:42 -0300
+
 php7.4 (7.4.3-4ubuntu2.10) focal-security; urgency=medium
 
   * SECURITY UPDATE: DoS in zend_string_extend function

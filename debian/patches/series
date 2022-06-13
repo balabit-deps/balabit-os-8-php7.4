@@ -72,3 +72,6 @@ CVE-2017-9118.patch
 CVE-2017-9119.patch
 CVE-2017-9120.patch
 CVE-2021-21707.patch
+0048-Fix-bug-79603-by-retrying-on-RTD-key-collision.patch
+CVE-2022-31625.patch
+CVE-2022-31626.patch
