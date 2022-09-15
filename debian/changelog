@@ -1,3 +1,18 @@
+php7.4 (7.4.3-4ubuntu2.16) focal; urgency=medium
+
+  [ Athos Ribeiro ]
+  * d/rules: fix PHP_EXTRA_VERSION setting. (LP: #1989196)
+  * Test PHP_EXTRA_VERSION setting with autopkgtest.
+
+  [ Matthew Ruffell ]
+  * No longer throw an error when serializing uninitialized typed
+    properties with __sleep(), which makes serializing objects with
+    __sleep() behave the same as serializing objects without
+    __sleep(). (LP: #1999598)
+    - d/p/lp-1999598-Fix-bug-79447.patch
+
+ -- Athos Ribeiro <athos.ribeiro@canonical.com>  Thu, 15 Sep 2022 19:53:21 -0300
+
 php7.4 (7.4.3-4ubuntu2.15) focal-security; urgency=medium
 
   * SECURITY UPDATE: Denial of service

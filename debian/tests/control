@@ -19,3 +19,6 @@ Depends: apache2,
          php7.4-fpm,
          wget
 Restrictions: needs-root
+
+Tests: version
+Depends: php7.4-cli
