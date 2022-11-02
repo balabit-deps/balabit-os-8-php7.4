@@ -76,3 +76,8 @@ CVE-2021-21707.patch
 CVE-2022-31625.patch
 CVE-2022-31626.patch
 0049-Update-gcc-func-attr-macro.patch
+CVE-2022-31628-1.patch
+CVE-2022-31628-2.patch
+CVE-2022-31629.patch
+CVE-2022-31630.patch
+CVE-2022-37454.patch

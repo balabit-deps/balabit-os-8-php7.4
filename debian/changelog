@@ -1,3 +1,31 @@
+php7.4 (7.4.3-4ubuntu2.15) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Denial of service
+    - debian/patches/CVE-2022-31628-1.patch: adding a recursion limit
+      in ext/phar/phar.c, ext/phar/tests/bug81726.phpt.
+    - debian/source/include-binaries: add ext/phar/tests/bug81726.gz.
+    - debian/patches/CVE-2022-31628-2.patch: avoid a second check in
+      ext/phar/phar.c.
+    - CVE-2022-31628
+  * SECURITY UPDATE: Cookie injection
+    - debian/patches/CVE-2022-31629.patch: don't mangle HTTP
+      variable names that clash with ones that have a specific semantic
+      meaning in ext/standard/test/bug81727.phpt,
+      main/php_variables.c.
+    - CVE-2022-31629
+  * SECURITY UPDATE: Out of bounds read
+    - debian/patches/CVE-2022-31630.patch: adds validation in
+      imageloadfont() for OOB in ext/gd/gd.c, ext/gd/tests/bug81739.phpt.
+    - CVE-2022-31630
+  * SECURITY UPDATE: Buffer overflow
+    - debian/patches/CVE-2022-37454.patch: fixes buffer overflow in
+      hash_update() on long parameter in
+      ext/hash/sha3/generic32lc/KeccakSponge.inc,
+      ext/hash/sha3/generic64lc/KeccakSponge.inc.
+    - CVE-2022-37454
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Wed, 02 Nov 2022 06:53:44 -0300
+
 php7.4 (7.4.3-4ubuntu2.13) focal; urgency=medium
 
   * d/p/0047-Update-gcc-func-attr-macro.patch: fix detection of unknown gcc
