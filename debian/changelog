@@ -1,3 +1,12 @@
+php7.4 (7.4.3-4ubuntu2.17) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Integer overflow
+    - debian/patches/CVE-2022-31631.patch: fix check
+      unquotedlen size in ext/pdo_sqlite/sqlite_driver.c.
+    - CVE-2022-31631
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Tue, 10 Jan 2023 12:37:44 -0300
+
 php7.4 (7.4.3-4ubuntu2.16) focal; urgency=medium
 
   [ Athos Ribeiro ]
