@@ -1,3 +1,27 @@
+php7.4 (7.4.3-4ubuntu2.18) focal-security; urgency=medium
+
+  * SECURITY UPDATE: password_verify() accepts invalid Blowfish hashes
+    - debian/patches/CVE-2023-0567-1.patch: fix validation of malformed
+      BCrypt hashes in ext/standard/crypt_blowfish.c,
+      ext/standard/tests/crypt/bcrypt_salt_dollar.phpt.
+    - debian/patches/CVE-2023-0567-2.patch: fix possible buffer overread in
+      php_crypt() in ext/standard/crypt.c,
+      ext/standard/tests/password/password_bcrypt_short.phpt.
+    - CVE-2023-0567
+  * SECURITY UPDATE: off-by-one in core path resolution function
+    - debian/patches/CVE-2023-0568.patch: fix array overrun when appending
+      slash to paths in ext/dom/document.c, ext/xmlreader/php_xmlreader.c,
+      main/fopen_wrappers.c.
+    - CVE-2023-0568
+  * SECURITY UPDATE: DoS via excessive number of parts in HTTP form upload
+    - debian/patches/CVE-2023-0662-1.patch: introduce
+      max_multipart_body_parts INI in main/main.c, main/rfc1867.c.
+    - debian/patches/CVE-2023-0662-2.patch: fix repeated warning for file
+      uploads limit exceeding in main/rfc1867.c.
+    - CVE-2023-0662
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Thu, 23 Feb 2023 07:43:23 -0500
+
 php7.4 (7.4.3-4ubuntu2.17) focal-security; urgency=medium
 
   * SECURITY UPDATE: Integer overflow

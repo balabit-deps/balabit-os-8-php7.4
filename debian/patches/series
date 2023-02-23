@@ -83,3 +83,8 @@ CVE-2022-31630.patch
 CVE-2022-37454.patch
 lp-1999598-Fix-bug-79447.patch
 CVE-2022-31631.patch
+CVE-2023-0567-1.patch
+CVE-2023-0567-2.patch
+CVE-2023-0568.patch
+CVE-2023-0662-1.patch
+CVE-2023-0662-2.patch
