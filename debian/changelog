@@ -1,3 +1,16 @@
+php7.4 (7.4.3-4ubuntu2.19) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Missing error check and insufficient random
+    bytes
+    - debian/patches/CVE-2023-3247-1.patch: fixes missing randomness
+      check and insufficient random byes for SOAP HTTP digest
+      in ext/soap/php_http.c.
+    - debian/patches/CVE-2023-3247-2.patch: fix wrong backporting of previous
+      soap patch.
+    - CVE-2023-3247
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Tue, 27 Jun 2023 12:49:59 -0300
+
 php7.4 (7.4.3-4ubuntu2.18) focal-security; urgency=medium
 
   * SECURITY UPDATE: password_verify() accepts invalid Blowfish hashes
