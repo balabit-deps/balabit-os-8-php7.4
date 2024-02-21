@@ -1,3 +1,22 @@
+php7.4 (7.4.3-4ubuntu2.20) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Disclosure sensitive information
+    - debian/patches/CVE-2023-3823.patch: sanitieze libxml2 globals
+      before parsing in ext/dom/document.c, ext/dom/documentfragment.c,
+      xml_global_state_entity_loader_bypass.phpt, ext/libxml/php_libxml.h,
+      ext/simplexml/simplexml.c, xml_global_state_entity_loader_bypass.phpt,
+      ext/soap/php_xml.c, ext/xml/compat.c, ext/xmlreader/php_xmlreader.c,
+      xml_global_state_entity_loader_bypass.phpt, ext/xsl/xsltprocessor.c,
+      ext/zend_test/test.c.
+    - CVE-2023-3823
+  * SECURITY UPDATE: Stack buffer overflow
+    - debian/patches/CVE-2023-3824.patch: fix buffer mismanagement in
+      phar_dir_read(), and in files ext/phar/dirstream.c,
+      ext/phar/tests/GHSA-jqcx-ccgx-xwhv.phpt.
+    - CVE-2023-3824
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Wed, 21 Feb 2024 10:54:34 -0300
+
 php7.4 (7.4.3-4ubuntu2.19) focal-security; urgency=medium
 
   * SECURITY UPDATE: Missing error check and insufficient random
