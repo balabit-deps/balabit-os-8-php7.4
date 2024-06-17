@@ -1,3 +1,13 @@
+php7.4 (7.4.3-4ubuntu2.23) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Invalid user information
+    - debian/patches/CVE-2024-5458.patch: improves filters validation
+      in ext/filter/logical_filters.c and adds test
+      in ext/filter/tests/ghsa-w8qr-v226-r27w.phpt.
+    - CVE-2024-5458
+
+ -- Leonidas Da Silva Barbosa <leo.barbosa@canonical.com>  Mon, 17 Jun 2024 10:22:20 -0300
+
 php7.4 (7.4.3-4ubuntu2.22) focal-security; urgency=medium
 
   * SECURITY UPDATE: Heap buffer-overflow
