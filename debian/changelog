@@ -1,3 +1,17 @@
+php7.4 (7.4.3-4ubuntu2.24) focal-security; urgency=medium
+
+  * SECURITY UPDATE: Erroneous parsing of multipart form data
+    - debian/patches/CVE-2024-8925.patch: limit bounday size in
+      main/rfc1867.c, tests/basic/*.
+    - CVE-2024-8925
+  * SECURITY UPDATE: cgi.force_redirect configuration can be bypassed due
+    to environment variable collision
+    - debian/patches/CVE-2024-8927.patch: check for REDIRECT_STATUS in
+      sapi/cgi/cgi_main.c.
+    - CVE-2024-8927
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Mon, 30 Sep 2024 14:16:20 -0400
+
 php7.4 (7.4.3-4ubuntu2.23) focal-security; urgency=medium
 
   * SECURITY UPDATE: Invalid user information
